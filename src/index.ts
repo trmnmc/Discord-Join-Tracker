@@ -16,6 +16,7 @@ import { AnalyticsDB } from "./db";
 import { registerEventHandlers } from "./events";
 import { registerGuildCommands, registerInteractionHandler } from "./commands";
 import { startCleanupJob } from "./cleanup";
+import { startDailyScheduler } from "./scheduler";
 import { logger } from "./logger";
 
 async function main(): Promise<void> {
@@ -52,10 +53,20 @@ async function main(): Promise<void> {
   registerEventHandlers(client, db, config.guildId);
   registerInteractionHandler({ db, config, client, startedAt });
 
+  // Stop handle for the daily scheduler; set on ready, cleared on shutdown.
+  let stopScheduler: (() => void) | null = null;
+
   client.once(Events.ClientReady, (c) => {
     logger.info(`Logged in as ${c.user.tag}`);
     c.user.setActivity("community analytics", { type: ActivityType.Watching });
     logStartupWarnings(c, config.guildId);
+
+    // Start the daily job only after the guild cache is populated.
+    if (config.dailyTasksEnabled) {
+      stopScheduler = startDailyScheduler(client, db, config);
+    } else {
+      logger.info("Daily scheduled job disabled (DAILY_TASKS_ENABLED=false).");
+    }
   });
 
   // Surface gateway errors instead of dying silently.
@@ -70,6 +81,7 @@ async function main(): Promise<void> {
   const shutdown = (signal: string) => {
     logger.info(`Received ${signal}, shutting down...`);
     clearInterval(cleanupTimer);
+    if (stopScheduler) stopScheduler();
     client.destroy();
     db.close();
     process.exit(0);

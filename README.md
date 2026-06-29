@@ -120,7 +120,15 @@ DEFAULT_DAYS=7
 BACKFILL_AUDIT_LOG=true
 MAX_MESSAGES_PER_CHANNEL=1000
 DELETE_RAW_MESSAGES_AFTER_DAYS=14
+
+# Daily scheduled job
+DAILY_TASKS_ENABLED=true
+DAILY_RUN_TIME_UTC=09:00
+REPORT_CHANNEL_ID=
 ```
+
+To get a channel's ID for `REPORT_CHANNEL_ID`, enable Developer Mode in Discord,
+right-click the target channel → **Copy Channel ID**.
 
 ## 5. Run locally
 
@@ -145,6 +153,39 @@ job, and logs in. Then in your server run:
 /community-report days:7      # generate the report + chart
 /analytics-status             # sanity-check intents, perms, and counts
 ```
+
+---
+
+## Running it daily
+
+The bot must stay **online continuously** — that is how live joins and leaves
+are captured via the gateway. On top of that, a built-in **daily scheduled job**
+runs once per day (no cron or extra process required):
+
+1. **Daily backfill** — re-reads current members' `joinedTimestamp` and refreshes
+   recent messages + audit-log removals. This **self-heals join tracking**: if the
+   bot was offline for a restart, deploy, or crash and missed live join events,
+   the backfill recovers every join for members still in the server. This is the
+   main reliability mechanism for "tracking joins daily."
+2. **Daily report** — if `REPORT_CHANNEL_ID` is set, the full community report
+   (embed + chart) is posted to that channel automatically, so you get a daily
+   snapshot without anyone running `/community-report`.
+
+Configure it via:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DAILY_TASKS_ENABLED` | `true` | Master switch for the daily job. |
+| `DAILY_RUN_TIME_UTC` | `09:00` | Time of day (24h **UTC**) the job fires. |
+| `REPORT_CHANNEL_ID` | _(blank)_ | Channel to post the daily report to. Blank = backfill only, no post. |
+
+The schedule is anchored to the wall clock (UTC) and re-arms itself after each
+run, so it stays accurate across long uptimes. The window analyzed is
+`DEFAULT_DAYS`. For the report to post, the bot needs **View Channel**, **Send
+Messages**, and **Attach Files** in the target channel.
+
+> The bot itself still needs to keep running 24/7 — use the VPS/systemd setup
+> below (or `pm2`) so it restarts automatically and the daily job keeps firing.
 
 ---
 
@@ -238,6 +279,8 @@ src/
   chart.ts       Hand-built SVG → PNG via sharp
   sentiment.ts   Local sentiment scoring + theme detection + suggestions
   questions.ts   Question detection, normalization, Jaccard clustering
+  reportView.ts  Renders ReportData into a Discord embed + chart attachment
+  scheduler.ts   Daily job: backfill + optional auto-posted report
   cleanup.ts     Retention job for old message rows
   logger.ts      Minimal leveled logger
 ```

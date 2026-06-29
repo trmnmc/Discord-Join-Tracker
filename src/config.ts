@@ -18,6 +18,10 @@ export interface AppConfig {
   backfillAuditLog: boolean;
   maxMessagesPerChannel: number;
   deleteRawMessagesAfterDays: number;
+  // Daily scheduled job:
+  dailyTasksEnabled: boolean;
+  dailyRunTimeUtc: string; // "HH:MM" 24h UTC
+  reportChannelId: string | null; // where the daily report is posted (optional)
 }
 
 function requireString(name: string): string {
@@ -43,6 +47,30 @@ function optionalInt(name: string, fallback: number, min: number, max: number): 
   return parsed;
 }
 
+function optionalString(name: string): string | null {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return null;
+  return raw.trim();
+}
+
+/** Parse an "HH:MM" 24-hour UTC time, falling back if malformed. */
+function parseTimeUtc(name: string, fallback: string): string {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const m = raw.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) {
+    logger.warn(`Env ${name}="${raw}" is not HH:MM; using default ${fallback}`);
+    return fallback;
+  }
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh > 23 || mm > 59) {
+    logger.warn(`Env ${name}="${raw}" out of range; using default ${fallback}`);
+    return fallback;
+  }
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
 function optionalBool(name: string, fallback: boolean): boolean {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === "") return fallback;
@@ -59,6 +87,9 @@ export function loadConfig(): AppConfig {
     backfillAuditLog: optionalBool("BACKFILL_AUDIT_LOG", true),
     maxMessagesPerChannel: optionalInt("MAX_MESSAGES_PER_CHANNEL", 1000, 1, 100000),
     deleteRawMessagesAfterDays: optionalInt("DELETE_RAW_MESSAGES_AFTER_DAYS", 14, 1, 365),
+    dailyTasksEnabled: optionalBool("DAILY_TASKS_ENABLED", true),
+    dailyRunTimeUtc: parseTimeUtc("DAILY_RUN_TIME_UTC", "09:00"),
+    reportChannelId: optionalString("REPORT_CHANNEL_ID"),
   };
 
   // Ensure the database directory exists so better-sqlite3 can create the file.
