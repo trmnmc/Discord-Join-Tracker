@@ -22,6 +22,12 @@ export interface AppConfig {
   dailyTasksEnabled: boolean;
   dailyRunTimeUtc: string; // "HH:MM" 24h UTC
   reportChannelId: string | null; // where the daily report is posted (optional)
+  // Local web dashboard:
+  dashboardEnabled: boolean;
+  dashboardHost: string;
+  dashboardPort: number;
+  dashboardUsername: string | null; // required when dashboardEnabled
+  dashboardPassword: string | null; // required when dashboardEnabled
 }
 
 function requireString(name: string): string {
@@ -90,7 +96,22 @@ export function loadConfig(): AppConfig {
     dailyTasksEnabled: optionalBool("DAILY_TASKS_ENABLED", true),
     dailyRunTimeUtc: parseTimeUtc("DAILY_RUN_TIME_UTC", "09:00"),
     reportChannelId: optionalString("REPORT_CHANNEL_ID"),
+    dashboardEnabled: optionalBool("DASHBOARD_ENABLED", false),
+    dashboardHost: (process.env.DASHBOARD_HOST || "127.0.0.1").trim(),
+    dashboardPort: optionalInt("DASHBOARD_PORT", 3000, 1, 65535),
+    dashboardUsername: optionalString("DASHBOARD_USERNAME"),
+    dashboardPassword: optionalString("DASHBOARD_PASSWORD"),
   };
+
+  // Credentials are mandatory once the dashboard is turned on — never serve it
+  // without auth.
+  if (config.dashboardEnabled) {
+    if (!config.dashboardUsername || !config.dashboardPassword) {
+      throw new Error(
+        "DASHBOARD_ENABLED=true requires both DASHBOARD_USERNAME and DASHBOARD_PASSWORD to be set.",
+      );
+    }
+  }
 
   // Ensure the database directory exists so better-sqlite3 can create the file.
   const dir = path.dirname(path.resolve(config.databasePath));

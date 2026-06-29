@@ -17,6 +17,7 @@ import { registerEventHandlers } from "./events";
 import { registerGuildCommands, registerInteractionHandler } from "./commands";
 import { startCleanupJob } from "./cleanup";
 import { startDailyScheduler } from "./scheduler";
+import { startDashboardServer, DashboardHandle } from "./dashboard";
 import { logger } from "./logger";
 
 async function main(): Promise<void> {
@@ -29,6 +30,15 @@ async function main(): Promise<void> {
   });
 
   const db = new AnalyticsDB(config.databasePath);
+
+  // Start the read-only web dashboard (independent of the Discord gateway —
+  // it only needs the database). Disabled by default.
+  let dashboard: DashboardHandle | null = null;
+  if (config.dashboardEnabled) {
+    dashboard = startDashboardServer(db, config);
+  } else {
+    logger.info("Web dashboard disabled (DASHBOARD_ENABLED=false).");
+  }
 
   // Register guild commands before login so they are ready immediately.
   try {
@@ -78,16 +88,23 @@ async function main(): Promise<void> {
   await client.login(config.discordToken);
 
   // Graceful shutdown.
-  const shutdown = (signal: string) => {
+  const shutdown = async (signal: string) => {
     logger.info(`Received ${signal}, shutting down...`);
     clearInterval(cleanupTimer);
     if (stopScheduler) stopScheduler();
+    if (dashboard) {
+      try {
+        await dashboard.close();
+      } catch (err) {
+        logger.warn("Error closing dashboard server", err);
+      }
+    }
     client.destroy();
     db.close();
     process.exit(0);
   };
-  process.on("SIGINT", () => shutdown("SIGINT"));
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
 /** Heuristic warnings about likely-missing privileged intents/permissions. */

@@ -3,7 +3,8 @@
 A self-hosted Discord bot that tracks server **joins** and **leaves**, backfills
 recent join data, analyzes community **sentiment**, surfaces the **top
 questions**, suggests **server improvements**, and renders a **chart + report**
-through slash commands.
+through slash commands — plus an optional **local web dashboard** for viewing
+join statistics in a browser.
 
 Everything runs locally:
 
@@ -12,6 +13,7 @@ Everything runs locally:
 - **better-sqlite3** for persistence (no external/hosted database)
 - **sentiment** for local, heuristic sentiment scoring (no external LLM)
 - **sharp** to rasterize a hand-built SVG chart to PNG (no headless browser)
+- **express** + **helmet** for the optional read-only web dashboard
 - **dotenv** for configuration
 
 No paid APIs, no hosted database, no external LLM.
@@ -125,6 +127,13 @@ DELETE_RAW_MESSAGES_AFTER_DAYS=14
 DAILY_TASKS_ENABLED=true
 DAILY_RUN_TIME_UTC=09:00
 REPORT_CHANNEL_ID=
+
+# Local web dashboard (read-only)
+DASHBOARD_ENABLED=true
+DASHBOARD_HOST=127.0.0.1
+DASHBOARD_PORT=3000
+DASHBOARD_USERNAME=admin
+DASHBOARD_PASSWORD=change-this-password
 ```
 
 To get a channel's ID for `REPORT_CHANNEL_ID`, enable Developer Mode in Discord,
@@ -186,6 +195,67 @@ Messages**, and **Attach Files** in the target channel.
 
 > The bot itself still needs to keep running 24/7 — use the VPS/systemd setup
 > below (or `pm2`) so it restarts automatically and the daily job keeps firing.
+
+---
+
+## Web dashboard
+
+In addition to the Discord slash commands, the bot can serve a small **local web
+dashboard** that reads the **same SQLite database** and shows join statistics in
+a browser. It reuses the same `AnalyticsDB` and `buildReportData` logic as the
+Discord report — it is not a second tracker.
+
+**This phase is read-only.** The dashboard only *reads* the database; it cannot
+trigger backfills, post reports, or change any settings.
+
+### Enable it
+
+Set these in `.env` (already included in `.env.example`):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DASHBOARD_ENABLED` | `false` | Turn the dashboard on/off. |
+| `DASHBOARD_HOST` | `127.0.0.1` | Bind address. Keep loopback for local-only access. |
+| `DASHBOARD_PORT` | `3000` | Port to listen on (1–65535). |
+| `DASHBOARD_USERNAME` | _(none)_ | Basic Auth username. **Required** when enabled. |
+| `DASHBOARD_PASSWORD` | _(none)_ | Basic Auth password. **Required** when enabled. |
+
+If `DASHBOARD_ENABLED=true` but the username or password is missing, the bot
+exits with a clear config error rather than serving an unauthenticated page.
+
+### Open it
+
+Start the bot (`npm start`) and visit:
+
+```
+http://127.0.0.1:3000
+```
+
+Your browser will prompt for the username/password from `.env`. After logging in
+you'll see:
+
+- **Cards** for joins, leaves, and net growth over the selected window.
+- A **daily breakdown table** of joins/leaves per UTC day.
+- A **7 / 14 / 30 day** window selector.
+- A **data-quality** line and a **"Last updated"** timestamp (your browser's
+  local time). The page auto-refreshes every 60 seconds.
+
+There is also a JSON endpoint, `GET /api/stats?days=7` (same auth), returning
+`days`, `sinceIso`, `untilIso`, `joinCount`, `leaveCount`, `netGrowth`, a `daily`
+array, and `dataQuality`. `days` is clamped to 1–30.
+
+### Security notes
+
+- **Change the default password.** Never run with `change-this-password`.
+- The dashboard exposes **only aggregate numbers** — no raw Discord user IDs and
+  no message content are ever sent to the browser.
+- It binds to `127.0.0.1` by default, so only your machine can reach it.
+- **Do not expose it directly to the internet.** For a public VPS, keep it bound
+  to `127.0.0.1` and put it behind an HTTPS reverse proxy (Caddy or Nginx) that
+  terminates TLS and adds its own authentication. Do not bind to `0.0.0.0`
+  unless it sits behind such a proxy.
+- Requests are protected with Basic Auth (timing-safe credential comparison) and
+  a strict same-origin Content-Security-Policy via `helmet`.
 
 ---
 
@@ -281,6 +351,7 @@ src/
   questions.ts   Question detection, normalization, Jaccard clustering
   reportView.ts  Renders ReportData into a Discord embed + chart attachment
   scheduler.ts   Daily job: backfill + optional auto-posted report
+  dashboard.ts   Read-only local web dashboard (Express + Basic Auth)
   cleanup.ts     Retention job for old message rows
   logger.ts      Minimal leveled logger
 ```
